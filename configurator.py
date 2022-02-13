@@ -2,7 +2,8 @@ from ast import arg
 import json
 import pathlib
 import sys
-from click import option
+from typing import TypedDict
+from wsgiref.validate import validator
 import requests
 import re
 import os
@@ -79,6 +80,99 @@ def ssh_sha256_fingerprint(pub_key):
         sha256.update(base64.b64decode(b64pubkey))
         hash_sha256 = sha256.digest()
         return "SHA256:%s" % base64.b64encode(hash_sha256).decode().rstrip("=")
+
+######################################################################################
+### VALIDATOR
+######################################################################################
+
+class TypeValidator:
+    def validate(self):
+        pass
+
+    @classmethod
+    def Website(cls,url):
+        if url is None:
+            return False
+        regex = re.compile(
+            r'^(?:http|ftp)s?://'  # http:// or https://
+            # domain...
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
+            r'localhost|'  # localhost...
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+            r'(?::\d+)?'  # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        return regex.match(url) is not None
+
+class TypeList(TypeValidator):
+    def __init__(self,type):
+        self.type = type
+
+    def validate(self,value):
+        valid_values = []
+        invalid_values = []
+        if isinstance(value,str):
+            value = value.split(",")
+        for i in value:
+            if isinstance(self.type,TypeValidator):
+                v_valid,v_invalid = self.type.validate(i)
+                if v_valid is not None:
+                    valid_values.append(v_valid)
+                if v_invalid is not None:
+                    invalid_values.append(v_invalid)
+            elif isinstance(self.type,type) and isinstance(i,self.type):
+                valid_values.append(i)
+            elif callable(self.type) and self.type(i):
+                valid_values.append(i)
+            else:
+                invalid_values.append(i)
+        return valid_values if valid_values != [] else None,invalid_values if invalid_values != [] else None
+
+
+class TypeBool(TypeValidator):
+    def __init__(self):
+        pass
+
+    def validate(self,value):
+        if isinstance(value,bool):
+            return value,None
+        elif str(value).lower() in ('yes','true','1','y',"ja","j"):
+            return True,None
+        elif str(value).lower() in ('no','false','0','n',"nee",):
+            return False,None
+        else: 
+            return None,value
+
+class TypeDict(TypeValidator):
+    def __init__(self,type):
+        self.type = type
+
+    def validate(self,value):
+        valid_values = {}
+        invalid_values = {}
+        if not isinstance(value,dict):
+            raise ValueError("Value need to be a %s"%dict)
+        for k,v in value.items():
+            if k in self.type:
+                if isinstance(self.type.get(k),TypeValidator):
+                    v_valid,v_invalid = self.type.get(k).validate(v)
+                elif isinstance(self.type.get(k),type) and isinstance(v,self.type.get(k)):
+                    v_valid,v_invalid = v,None
+                elif callable(self.type.get(k)) and self.type.get(k) not in (str,int,bool,list,dict,float) and self.type.get(k)(v):
+                    v_valid,v_invalid = v,None
+                else:
+                    v_valid,v_invalid = None,v
+            else: 
+                v_valid,v_invalid = None,v
+            if v_valid is not None:
+                valid_values[k] = v_valid
+            if v_invalid is not None:
+                invalid_values[k] = v_invalid
+        return valid_values if valid_values != {} else None,invalid_values if invalid_values != {} else None
+
+######################################################################################
+### GITEA
+######################################################################################
+
 
 
 class GiteaRepo:
@@ -479,167 +573,45 @@ def script_options():
     options.update({k: v for k, v in parse_arguments().items() if v is not None})
     return options
 
+
+
 class ConfObject(dict):
     ALLOWED_PROPERTIES = {}
     def __init__(self,*args,**kwargs):
-        if args and isinstance(args,list):
-            if len(args) < 2 and isinstance(args[0],dict):
-                self.update(self.__verify_properties(args[0]))
-            else:
-                raise ValueError("Invalid args for %s object"%type(self))
+        properties = None
+        if args and isinstance(args,list) and len(args) < 2 and isinstance(args[0],dict):
+            properties = args[0]
+        elif kwargs and isinstance(kwargs,dict):
+            properties = kwargs
         else:
-            self.update(self.__verify_properties(**kwargs))
+            raise ValueError("Invalid args for %s object"%type(self))
 
-    def __verify_properties(self,**kwargs):
-        verified_properties = {}
-        for key,value in kwargs.items():
-            if key in self.ALLOWED_PROPERTIES:
-                required_value_type = self.ALLOWED_PROPERTIES.get(key)
-                if isinstance(required_value_type,type) and isinstance(value,required_value_type):
-                    verified_properties[key] = value
-                elif required_value_type == bool and isinstance(value,(str,int)):
-                    if str(value).lower() in ('yes','true','1','y',"ja","j"):
-                        verified_properties[key] = True
-                    elif str(value).lower() in ('no','false','0','n',"nee",):
-                        verified_properties[key] = False
-                    else: 
-                        logging.info("Invalid value for '%s' property in %s object"%(key,type(self)))
-                elif isinstance(required_value_type,ConfObject.Validator) and required_value_type.validate(value):
-                    verified_properties[key] = value
-                elif callable(required_value_type) and required_value_type(value):
-                    verified_properties[key] = value
-                else: 
-                    logging.info("Invalid value for '%s' property in %s object"%(key,type(self)))
-            else:
-                logging.info("Property '%s' not allowed for %s object"%(key,type(self)))
-        return verified_properties
-
-    @classmethod
-    def ValidWebsite(cls,url):
-        if url is None:
-            return False
-        regex = re.compile(
-            r'^(?:http|ftp)s?://'  # http:// or https://
-            # domain...
-            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
-            r'localhost|'  # localhost...
-            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-            r'(?::\d+)?'  # optional port
-            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-        return regex.match(url) is not None
-
-    class Validator:
-        def validate(self):
-            return None,True
-
-    class TypeList:
-        def __init__(self,*args,**kwargs):
-            if args and isinstance(args,list):
-                if len(args) < 2 and isinstance(args[0],dict):
-                    self.type = args[0]
-                else:
-                    raise ValueError("Invalid args for %s object"%type(self))
-            else:
-                self.type = kwargs
-
-        def validate(self,value):
-            if isinstance(self.type,ConfObject.Validator):
-                valid_values = []
-                valid = True
-                for i in value:
-                    if isinstance(self.type,ConfObject.Validator):
-                        v_valid_value,v_valid = self.type.validate(i)
-                    elif isinstance(self.type,type) and isinstance(i,self.type):
-                        v_valid_value,v_valid = i,True
-                    elif callable(self.type) and self.type(i):
-                        v_valid_value,v_valid = i,True
-                    else:
-                        v_valid_value,v_valid = None,False
-
-                    valid = valid and v_valid
-                    if v_valid:
-                        valid_values.append(v_valid_value)
-                    else:
-                        logging.debug("Invalid value of type %s in %s"%(type(i),type(self)))
-                return valid_values,valid
-            else:
-                return all(True for s in value if isinstance(s,self.type))
-    
-    class TypeBool:
-        def __init__(self):
-            pass
-
-        def validate(self,value):
-            if isinstance(value,bool):
-                return value,True
-            elif str(value).lower() in ('yes','true','1','y',"ja","j"):
-                return True,True
-            elif str(value).lower() in ('no','false','0','n',"nee",):
-                return False,True
-            else: 
-                return None,False
-
-    class TypeDict:
-        def __init__(self,*args,**kwargs):
-            if args and isinstance(args,list):
-                if len(args) < 2 and isinstance(args[0],dict):
-                    self.type = args[0]
-                else:
-                    raise ValueError("Invalid args for %s object"%type(self))
-            else:
-                self.type = kwargs
-
-        def validate(self,value):
-            valid = True
-            valid_value = {}
-            if not isinstance(value,dict):
-                raise ValueError("Value need to be a %s"%dict)
-            for k,v in value.items():
-                if k in self.type:
-                    if isinstance(self.type.get(k),ConfObject.Validator):
-                        v_valid_value,v_valid = self.type.get(k).validate(v)
-                        if v_valid:
-                            valid_value[k] = v_valid_value
-                        else: 
-                            logging.debug("Invalid value for '%s' property in %s object"%(k,type(self)))
-                    elif isinstance(self.type.get(k),type) and isinstance(v,self.type.get(k)):
-                        valid_value[k] = v
-                    elif callable(self.type.get(k)) and self.type.get(k)(value):
-                        valid_value[k] = v
-                    else:
-                        logging.info("Invalid value for '%s' property in %s object"%(k,type(self)))
-                else: 
-                    valid = False
-                    logging.debug("Property '%s' not allowed for %s object"%(k,type(self)))
-
+        validator = TypeDict(self.ALLOWED_PROPERTIES)
+        valid_props, invalid_props = validator.validate(properties)
+        if valid_props is not None:
+            self.update(valid_props)
         
+        if invalid_props is not None:
+            logging.warning("Invalid properties for %s (%s) => %s"%(type(self).__name__,self.name,str(invalid_props)))
 
-# - username: user1
-#     email: user1@example.com
-#     default_password: changeme
-#     active: true
-#     admin: true
-#     description: string
-#     full_name: string
-#     location: string
-#     prohibit_login: true
-#     restricted: true
-#     visibility: string
-#     website: https://www.user1.com
+    @property
+    def name(self):
+        return self.get("name") or self.get("username") or "unknown"
+
 
 class User(ConfObject):
     ALLOWED_PROPERTIES = dict(
         username=str,
         email=str,
-        active=bool,
-        admin=bool,
+        active=TypeBool(),
+        admin=TypeBool(),
         description=str,
         full_name=str,
         location=str,
-        prohibit_login=bool,
-        restricted=bool,
+        prohibit_login=TypeBool(),
+        restricted=TypeBool(),
         visibility=str,
-        website=ConfObject.ValidWebsite,
+        website=TypeValidator.Website,
         default_password=str,
         )
     
@@ -650,19 +622,36 @@ class Organisation(ConfObject):
         full_name=str,
         location=str,
         visibility=str,
-        repo_admin_change_team_access=str,
-        website=ConfObject.ValidWebsite,
-        owners=ConfObject.TypeList(str),
-        )    
+        repo_admin_change_team_access=TypeBool(),
+        website=TypeValidator.Website,
+        owners=TypeList(str),
+        teams=TypeList(TypeDict(dict(
+            name=str,
+            description=str,
+            can_create_org_repo=TypeBool(),
+            includes_all_repositories=TypeBool(),
+            permission=str,
+            units=TypeList(str),
+            members=TypeList(str)
+        ))),
+        repositories=TypeList(TypeDict(dict(
+            name=str,
+            default_branch= str,
+            description= str,
+            private=TypeBool(),
+            template=TypeBool(),
+            website=TypeValidator.Website,
+            trust_model=str,
+            ssh_authorized_keys=TypeList(TypeDict(dict(
+                    name=str,
+                    key=str
+                ))
+            )
+        )))
+    )    
 
 
 
-user = User(username="sdescamps",website="https://test.com",active="no")
-org = Organisation(name="axxes",owners="test")
-print(user)
-
-
-sys.exit(1)
 
 if __name__ == "__main__":
     options=script_options()
@@ -683,193 +672,201 @@ if __name__ == "__main__":
             logging.error("Unsupported config file")
             sys.exit(1)
 
-    if gitea_config == {}:
-        sys.exit(0)
 
-    timeout = 60*2   # 2 minutes from now
-    start_time = time.time()
-    while True:
-        if GiteaRepo.connection_test(options.get("url"), verify=options.get("verify_cert")):
-            break
-        elif time.time() > start_time + timeout:
-            logging.error(
-                "Connection timeout. Can't reach the Gitea API %s" % options.get("url"))
-            sys.exit(1)
-        logging.info("Gitea API not yet available (%ds)" %
-                     (int(time.time()-start_time)))
-        time.sleep(5)
+    for user_props in gitea_config.get("users"):
+        user = User(**user_props)
+        # print(user)
+    for org_props in gitea_config.get("organisations"):
+        org = Organisation(**org_props)
+        # print(json.dumps(org,indent=2))
 
-    gitea_repo = GiteaRepo(options.get("url"), options.get("user"), options.get("password"),
-                           cert_verify=options.get("verify_cert"), token=options.get("token"))
+    # if gitea_config == {}:
+    #     sys.exit(0)
 
-    for user in gitea_config.get("users", []):
-        if not isinstance(user.get("username"), str) or not isinstance(user.get("email"), str):
-            logging.error("Invalid user: %s", str(user))
-        else:
-            existing_user = gitea_repo.get_user(user.get("username"))
-            if not existing_user:
-                kwargs = {}
-                for p in ("full_name", "send_notify", "visibility"):
-                    if p in user:
-                        kwargs[p] = user.get(p)
-                existing_user = gitea_repo.create_user(
-                    user.get("username"), user.get("email"), **kwargs)
-                logging.info("Create User: %s", user.get("username"))
-            changed = False
-            kwargs = dict()
-            if "admin" in user and user.get("admin") != existing_user.get("is_admin"):
-                kwargs["admin"] = user.get("admin")
-                changed = True
-            for p in ('active', 'description', 'full_name', 'location', 'prohibit_login', 'restricted', 'visibility', 'website'):
-                if p in user and user.get(p) != existing_user.get(p):
-                    kwargs[p] = user.get(p)
-                    changed = True
-            if changed:
-                logging.debug("Modify user %s: %s",
-                              user.get("username"), str(kwargs))
-                updated_user = gitea_repo.update_user(
-                    login_name=existing_user.get("login"), **kwargs)
-                logging.info("Update User: %s", user.get("username"))
-            else:
-                logging.info("User already exists: %s", user.get("username"))
+    # timeout = 60*2   # 2 minutes from now
+    # start_time = time.time()
+    # while True:
+    #     if GiteaRepo.connection_test(options.get("url"), verify=options.get("verify_cert")):
+    #         break
+    #     elif time.time() > start_time + timeout:
+    #         logging.error(
+    #             "Connection timeout. Can't reach the Gitea API %s" % options.get("url"))
+    #         sys.exit(1)
+    #     logging.info("Gitea API not yet available (%ds)" %
+    #                  (int(time.time()-start_time)))
+    #     time.sleep(5)
 
-    for org in gitea_config.get("organisations", []):
-        if not isinstance(org.get("name"), str):
-            logging.error("Invalid organisation: %s", str(org))
-        else:
-            existing_org = gitea_repo.get_organisation(org.get("name"))
-            if not existing_org:
-                kwargs = dict(name=org.get("name"))
-                for p in ("description", "visibility", "website", "full_name", "location", "repo_admin_change_team_access"):
-                    if p in org:
-                        kwargs[p] = org.get(p)
-                result = gitea_repo.create_organisation(**kwargs)
-                if result.get("id"):
-                    logging.info("Create Organisation: %s", org.get("name"))
-                else:
-                    logging.error(
-                        "Failed to create Organisation: %s", org.get("name"))
-            else:
-                changed = False
-                kwargs = dict()
-                for p in ("description", "visibility", "website", "full_name", "location", "repo_admin_change_team_access"):
-                    if p in org and org.get(p) != existing_org.get(p):
-                        kwargs[p] = org.get(p)
-                        changed = True
-                if changed:
-                    gitea_repo.update_organisation(org.get("name"), **kwargs)
-                    logging.info("Update organisation: %s", org.get("name"))
-                else:
-                    logging.info(
-                        "Organisation already exists: %s", org.get("name"))
+    # gitea_repo = GiteaRepo(options.get("url"), options.get("user"), options.get("password"),
+    #                        cert_verify=options.get("verify_cert"), token=options.get("token"))
 
-        if isinstance(org.get("owners"), list):
-            existing_owners = [
-                u.get("username") for u in gitea_repo.get_organisation_owners(org.get("name"))]
-            for owner in org.get("owners", []):
-                if owner not in existing_owners:
-                    gitea_repo.add_organisation_owner(org.get("name"))
-                    logging.info(
-                        "Add %s to Owners of organisation %s", owner, org.get("name"))
-                else:
-                    logging.info(
-                        "User %s already owner in organisation %s", owner, org.get("name"))
+    # for user in gitea_config.get("users", []):
+    #     if not isinstance(user.get("username"), str) or not isinstance(user.get("email"), str):
+    #         logging.error("Invalid user: %s", str(user))
+    #     else:
+    #         existing_user = gitea_repo.get_user(user.get("username"))
+    #         if not existing_user:
+    #             kwargs = {}
+    #             for p in ("full_name", "send_notify", "visibility"):
+    #                 if p in user:
+    #                     kwargs[p] = user.get(p)
+    #             existing_user = gitea_repo.create_user(
+    #                 user.get("username"), user.get("email"), **kwargs)
+    #             logging.info("Create User: %s", user.get("username"))
+    #         changed = False
+    #         kwargs = dict()
+    #         if "admin" in user and user.get("admin") != existing_user.get("is_admin"):
+    #             kwargs["admin"] = user.get("admin")
+    #             changed = True
+    #         for p in ('active', 'description', 'full_name', 'location', 'prohibit_login', 'restricted', 'visibility', 'website'):
+    #             if p in user and user.get(p) != existing_user.get(p):
+    #                 kwargs[p] = user.get(p)
+    #                 changed = True
+    #         if changed:
+    #             logging.debug("Modify user %s: %s",
+    #                           user.get("username"), str(kwargs))
+    #             updated_user = gitea_repo.update_user(
+    #                 login_name=existing_user.get("login"), **kwargs)
+    #             logging.info("Update User: %s", user.get("username"))
+    #         else:
+    #             logging.info("User already exists: %s", user.get("username"))
 
-        if isinstance(org.get("teams"), list):
-            for team in org.get("teams"):
-                units = [t for t in team.get("units", []) if t in (
-                    "repo.code", "repo.issues", "repo.ext_issues", "repo.wiki", "repo.pulls", "repo.releases", "repo.projects", "repo.ext_wiki")]
-                existing_team = gitea_repo.get_organisation_team(
-                    org.get("name"), team.get("name"))
-                if not existing_team:
-                    kwargs = {k: v for k, v in team.items() if k in (
-                        'can_create_org_repo', 'description', 'includes_all_repositories', 'permission')}
-                    kwargs["units"] = units
-                    existing_team = gitea_repo.create_team(
-                        org.get("name"), team.get("name"), **kwargs)
-                    logging.info("Create team: %s" % team.get("name"))
-                else:
-                    changed = False
-                    kwargs = dict()
-                    for p in ('can_create_org_repo', 'description', 'includes_all_repositories', 'permission'):
-                        if p in team and team.get(p) != existing_team.get(p):
-                            kwargs[p] = team.get(p)
-                            changed = True
-                    if team.get("permissions") != "admin" and set(existing_team.get("units") or set([])) != set(units):
-                        kwargs["units"] = units
-                        changed = True
-                    if changed:
-                        gitea_repo.update_team(
-                            org.get("name"), team.get("name"), **kwargs)
-                        logging.info("Updated team: %s" % team.get("name"))
-                    else:
-                        logging.info("Team already exists: %s" %
-                                     team.get("name"))
-                current_team_members = [m.get(
-                    "username") for m in gitea_repo.get_team_members_by_team_id(existing_team.get("id"))]
-                for member in team.get("members", []):
-                    if member not in current_team_members:
-                        gitea_repo.add_member_to_team(
-                            existing_team.get("id"), member)
-                        logging.info("Add %s to team %s" %
-                                     (member, team.get("name")))
-                    else:
-                        logging.info("%s already member of team %s" %
-                                     (member, team.get("name")))
+    # for org in gitea_config.get("organisations", []):
+    #     if not isinstance(org.get("name"), str):
+    #         logging.error("Invalid organisation: %s", str(org))
+    #     else:
+    #         existing_org = gitea_repo.get_organisation(org.get("name"))
+    #         if not existing_org:
+    #             kwargs = dict(name=org.get("name"))
+    #             for p in ("description", "visibility", "website", "full_name", "location", "repo_admin_change_team_access"):
+    #                 if p in org:
+    #                     kwargs[p] = org.get(p)
+    #             result = gitea_repo.create_organisation(**kwargs)
+    #             if result.get("id"):
+    #                 logging.info("Create Organisation: %s", org.get("name"))
+    #             else:
+    #                 logging.error(
+    #                     "Failed to create Organisation: %s", org.get("name"))
+    #         else:
+    #             changed = False
+    #             kwargs = dict()
+    #             for p in ("description", "visibility", "website", "full_name", "location", "repo_admin_change_team_access"):
+    #                 if p in org and org.get(p) != existing_org.get(p):
+    #                     kwargs[p] = org.get(p)
+    #                     changed = True
+    #             if changed:
+    #                 gitea_repo.update_organisation(org.get("name"), **kwargs)
+    #                 logging.info("Update organisation: %s", org.get("name"))
+    #             else:
+    #                 logging.info(
+    #                     "Organisation already exists: %s", org.get("name"))
 
-        if isinstance(org.get("repositories"), list):
-            for repo in org.get("repositories"):
-                existing_repo = gitea_repo.get_orgainsation_repo(
-                    org.get("name"), repo.get("name"))
-                if not existing_repo:
-                    kwargs = {k: v for k, v in repo.items() if k in ('default_branch', 'description',
-                                                                     'gitignores', 'issue_labels', 'license', 'readme', 'auto_init', 'private', 'template')}
-                    if "trust_model" in kwargs:
-                        kwargs["trust_model"] = [tm for tm in repo.get("trust_model", []) if tm in (
-                            "default", "collaborator", "committer", "collaboratorcommitter")]
-                    existing_repo = gitea_repo.create_organisation_repo(
-                        org.get("name"), repo.get("name"), **kwargs)
-                    logging.info("Create repo: %s" % repo.get("name"))
+    #     if isinstance(org.get("owners"), list):
+    #         existing_owners = [
+    #             u.get("username") for u in gitea_repo.get_organisation_owners(org.get("name"))]
+    #         for owner in org.get("owners", []):
+    #             if owner not in existing_owners:
+    #                 gitea_repo.add_organisation_owner(org.get("name"))
+    #                 logging.info(
+    #                     "Add %s to Owners of organisation %s", owner, org.get("name"))
+    #             else:
+    #                 logging.info(
+    #                     "User %s already owner in organisation %s", owner, org.get("name"))
 
-                changed = False
-                kwargs = dict()
-                for p in ('allow_merge_commits', 'allow_rebase', 'allow_rebase_explicit', 'allow_squash_merge', 'default_branch', 'default_merge_style', 'description', 'has_issues', 'has_projects', 'has_pull_requests', 'has_wiki', 'ignore_whitespace_conflicts', 'private', 'template', 'website'):
-                    if p in repo and repo.get(p) != existing_repo.get(p):
-                        kwargs[p] = repo.get(p)
-                        changed = True
-                if changed:
-                    gitea_repo.update_organisation_repo(
-                        org.get("name"), repo.get("name"), **kwargs)
-                    logging.info("Update repository: %s" % repo.get("name"))
-                else:
-                    logging.info("repository already exists: %s" %
-                                 repo.get("name"))
+    #     if isinstance(org.get("teams"), list):
+    #         for team in org.get("teams"):
+    #             units = [t for t in team.get("units", []) if t in (
+    #                 "repo.code", "repo.issues", "repo.ext_issues", "repo.wiki", "repo.pulls", "repo.releases", "repo.projects", "repo.ext_wiki")]
+    #             existing_team = gitea_repo.get_organisation_team(
+    #                 org.get("name"), team.get("name"))
+    #             if not existing_team:
+    #                 kwargs = {k: v for k, v in team.items() if k in (
+    #                     'can_create_org_repo', 'description', 'includes_all_repositories', 'permission')}
+    #                 kwargs["units"] = units
+    #                 existing_team = gitea_repo.create_team(
+    #                     org.get("name"), team.get("name"), **kwargs)
+    #                 logging.info("Create team: %s" % team.get("name"))
+    #             else:
+    #                 changed = False
+    #                 kwargs = dict()
+    #                 for p in ('can_create_org_repo', 'description', 'includes_all_repositories', 'permission'):
+    #                     if p in team and team.get(p) != existing_team.get(p):
+    #                         kwargs[p] = team.get(p)
+    #                         changed = True
+    #                 if team.get("permissions") != "admin" and set(existing_team.get("units") or set([])) != set(units):
+    #                     kwargs["units"] = units
+    #                     changed = True
+    #                 if changed:
+    #                     gitea_repo.update_team(
+    #                         org.get("name"), team.get("name"), **kwargs)
+    #                     logging.info("Updated team: %s" % team.get("name"))
+    #                 else:
+    #                     logging.info("Team already exists: %s" %
+    #                                  team.get("name"))
+    #             current_team_members = [m.get(
+    #                 "username") for m in gitea_repo.get_team_members_by_team_id(existing_team.get("id"))]
+    #             for member in team.get("members", []):
+    #                 if member not in current_team_members:
+    #                     gitea_repo.add_member_to_team(
+    #                         existing_team.get("id"), member)
+    #                     logging.info("Add %s to team %s" %
+    #                                  (member, team.get("name")))
+    #                 else:
+    #                     logging.info("%s already member of team %s" %
+    #                                  (member, team.get("name")))
 
-                if isinstance(repo.get("ssh_authorized_keys"), list):
-                    for ssh_key in repo.get("ssh_authorized_keys", []):
-                        fingerprint = ssh_sha256_fingerprint(
-                            ssh_key.get("key"))
-                        if fingerprint is None:
-                            logging.error(
-                                "Can't calculate fingerprint of ssh key: %s..." % ssh_key.get("key", "")[1:20])
-                        existing_key = gitea_repo.get_repo_key_by_fingerprint(
-                            org.get("name"), repo.get("name"), fingerprint=fingerprint)
-                        if not existing_key:
-                            gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
-                                "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
-                            logging.info(
-                                "Add SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
-                        else:
-                            if ssh_key.get("read_only", True) != existing_key.get("read_only") or (ssh_key.get("title") or ssh_key.get("name")) != existing_key.get("title"):
-                                gitea_repo.delete_repo_key(org.get("name"), repo.get(
-                                    "name"), key_id=existing_key.get("id"))
-                                gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
-                                    "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
-                                logging.info(
-                                    "Renew SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
-                            else:
-                                logging.info(
-                                    "SSH key (fingerprint:%s) already addes to repo %s", fingerprint, repo.get("name"))
+    #     if isinstance(org.get("repositories"), list):
+    #         for repo in org.get("repositories"):
+    #             existing_repo = gitea_repo.get_orgainsation_repo(
+    #                 org.get("name"), repo.get("name"))
+    #             if not existing_repo:
+    #                 kwargs = {k: v for k, v in repo.items() if k in ('default_branch', 'description',
+    #                                                                  'gitignores', 'issue_labels', 'license', 'readme', 'auto_init', 'private', 'template')}
+    #                 if "trust_model" in kwargs:
+    #                     kwargs["trust_model"] = [tm for tm in repo.get("trust_model", []) if tm in (
+    #                         "default", "collaborator", "committer", "collaboratorcommitter")]
+    #                 existing_repo = gitea_repo.create_organisation_repo(
+    #                     org.get("name"), repo.get("name"), **kwargs)
+    #                 logging.info("Create repo: %s" % repo.get("name"))
+
+    #             changed = False
+    #             kwargs = dict()
+    #             for p in ('allow_merge_commits', 'allow_rebase', 'allow_rebase_explicit', 'allow_squash_merge', 'default_branch', 'default_merge_style', 'description', 'has_issues', 'has_projects', 'has_pull_requests', 'has_wiki', 'ignore_whitespace_conflicts', 'private', 'template', 'website'):
+    #                 if p in repo and repo.get(p) != existing_repo.get(p):
+    #                     kwargs[p] = repo.get(p)
+    #                     changed = True
+    #             if changed:
+    #                 gitea_repo.update_organisation_repo(
+    #                     org.get("name"), repo.get("name"), **kwargs)
+    #                 logging.info("Update repository: %s" % repo.get("name"))
+    #             else:
+    #                 logging.info("repository already exists: %s" %
+    #                              repo.get("name"))
+
+    #             if isinstance(repo.get("ssh_authorized_keys"), list):
+    #                 for ssh_key in repo.get("ssh_authorized_keys", []):
+    #                     fingerprint = ssh_sha256_fingerprint(
+    #                         ssh_key.get("key"))
+    #                     if fingerprint is None:
+    #                         logging.error(
+    #                             "Can't calculate fingerprint of ssh key: %s..." % ssh_key.get("key", "")[1:20])
+    #                     existing_key = gitea_repo.get_repo_key_by_fingerprint(
+    #                         org.get("name"), repo.get("name"), fingerprint=fingerprint)
+    #                     if not existing_key:
+    #                         gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
+    #                             "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
+    #                         logging.info(
+    #                             "Add SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
+    #                     else:
+    #                         if ssh_key.get("read_only", True) != existing_key.get("read_only") or (ssh_key.get("title") or ssh_key.get("name")) != existing_key.get("title"):
+    #                             gitea_repo.delete_repo_key(org.get("name"), repo.get(
+    #                                 "name"), key_id=existing_key.get("id"))
+    #                             gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
+    #                                 "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
+    #                             logging.info(
+    #                                 "Renew SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
+    #                         else:
+    #                             logging.info(
+    #                                 "SSH key (fingerprint:%s) already addes to repo %s", fingerprint, repo.get("name"))
 
 
 # print(get_organisations(gitea_url=GITEA_URL, token=token, verify=VERIFY_CERT))
