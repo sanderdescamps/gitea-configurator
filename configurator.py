@@ -780,113 +780,113 @@ if __name__ == "__main__":
                     logging.info(
                         "Organisation already exists: %s", org.get("name"))
 
-        # if isinstance(org.get("owners"), list):
-        #     existing_owners = [
-        #         u.get("username") for u in gitea_repo.get_organisation_owners(org.get("name"))]
-        #     for owner in org.get("owners", []):
-        #         if owner not in existing_owners:
-        #             gitea_repo.add_organisation_owner(org.get("name"))
-        #             logging.info(
-        #                 "Add %s to Owners of organisation %s", owner, org.get("name"))
-        #         else:
-        #             logging.info(
-        #                 "User %s already owner in organisation %s", owner, org.get("name"))
+        if isinstance(org.get("owners"), list):
+            existing_owners = [
+                u.get("username") for u in gitea_repo.get_organisation_owners(org.get("name"))]
+            for owner in org.get("owners", []):
+                if owner not in existing_owners:
+                    gitea_repo.add_organisation_owner(org.get("name"),owner)
+                    logging.info(
+                        "Add %s to Owners of organisation %s", owner, org.get("name"))
+                else:
+                    logging.info(
+                        "User %s already owner in organisation %s", owner, org.get("name"))
 
-        # if isinstance(org.get("teams"), list):
-        #     for team in org.get("teams"):
-        #         units = [t for t in team.get("units", []) if t in (
-        #             "repo.code", "repo.issues", "repo.ext_issues", "repo.wiki", "repo.pulls", "repo.releases", "repo.projects", "repo.ext_wiki")]
-        #         existing_team = gitea_repo.get_organisation_team(
-        #             org.get("name"), team.get("name"))
-        #         if not existing_team:
-        #             kwargs = {k: v for k, v in team.items() if k in (
-        #                 'can_create_org_repo', 'description', 'includes_all_repositories', 'permission')}
-        #             kwargs["units"] = units
-        #             existing_team = gitea_repo.create_team(
-        #                 org.get("name"), team.get("name"), **kwargs)
-        #             logging.info("Create team: %s" % team.get("name"))
-        #         else:
-        #             changed = False
-        #             kwargs = dict()
-        #             for p in ('can_create_org_repo', 'description', 'includes_all_repositories', 'permission'):
-        #                 if p in team and team.get(p) != existing_team.get(p):
-        #                     kwargs[p] = team.get(p)
-        #                     changed = True
-        #             if team.get("permissions") != "admin" and set(existing_team.get("units") or set([])) != set(units):
-        #                 kwargs["units"] = units
-        #                 changed = True
-        #             if changed:
-        #                 gitea_repo.update_team(
-        #                     org.get("name"), team.get("name"), **kwargs)
-        #                 logging.info("Updated team: %s" % team.get("name"))
-        #             else:
-        #                 logging.info("Team already exists: %s" %
-        #                              team.get("name"))
-        #         current_team_members = [m.get(
-        #             "username") for m in gitea_repo.get_team_members_by_team_id(existing_team.get("id"))]
-        #         for member in team.get("members", []):
-        #             if member not in current_team_members:
-        #                 gitea_repo.add_member_to_team(
-        #                     existing_team.get("id"), member)
-        #                 logging.info("Add %s to team %s" %
-        #                              (member, team.get("name")))
-        #             else:
-        #                 logging.info("%s already member of team %s" %
-        #                              (member, team.get("name")))
+        if isinstance(org.get("teams"), list):
+            for team in org.get("teams"):
+                units = [t for t in team.get("units", []) if t in (
+                    "repo.code", "repo.issues", "repo.ext_issues", "repo.wiki", "repo.pulls", "repo.releases", "repo.projects", "repo.ext_wiki")]
+                existing_team = gitea_repo.get_organisation_team(
+                    org.get("name"), team.get("name"))
+                if not existing_team:
+                    kwargs = {k: v for k, v in team.items() if k in (
+                        'can_create_org_repo', 'description', 'includes_all_repositories', 'permission')}
+                    kwargs["units"] = units
+                    existing_team = gitea_repo.create_team(
+                        org.get("name"), team.get("name"), **kwargs)
+                    logging.info("Create team: %s" % team.get("name"))
+                else:
+                    changed = False
+                    kwargs = dict()
+                    for p in ('can_create_org_repo', 'description', 'includes_all_repositories', 'permission'):
+                        if p in team and team.get(p) != existing_team.get(p):
+                            kwargs[p] = team.get(p)
+                            changed = True
+                    if team.get("permissions") != "admin" and set(existing_team.get("units") or set([])) != set(units):
+                        kwargs["units"] = units
+                        changed = True
+                    if changed:
+                        gitea_repo.update_team(
+                            org.get("name"), team.get("name"), **kwargs)
+                        logging.info("Updated team: %s" % team.get("name"))
+                    else:
+                        logging.info("Team already exists: %s" %
+                                     team.get("name"))
+                current_team_members = [m.get(
+                    "username") for m in gitea_repo.get_team_members_by_team_id(existing_team.get("id"))]
+                for member in team.get("members", []):
+                    if member not in current_team_members:
+                        gitea_repo.add_member_to_team(
+                            existing_team.get("id"), member)
+                        logging.info("Add %s to team %s" %
+                                     (member, team.get("name")))
+                    else:
+                        logging.info("%s already member of team %s" %
+                                     (member, team.get("name")))
 
-        # if isinstance(org.get("repositories"), list):
-        #     for repo in org.get("repositories"):
-        #         existing_repo = gitea_repo.get_orgainsation_repo(
-        #             org.get("name"), repo.get("name"))
-        #         if not existing_repo:
-        #             kwargs = {k: v for k, v in repo.items() if k in ('default_branch', 'description',
-        #                                                              'gitignores', 'issue_labels', 'license', 'readme', 'auto_init', 'private', 'template')}
-        #             if "trust_model" in kwargs:
-        #                 kwargs["trust_model"] = [tm for tm in repo.get("trust_model", []) if tm in (
-        #                     "default", "collaborator", "committer", "collaboratorcommitter")]
-        #             existing_repo = gitea_repo.create_organisation_repo(
-        #                 org.get("name"), repo.get("name"), **kwargs)
-        #             logging.info("Create repo: %s" % repo.get("name"))
+        if isinstance(org.get("repositories"), list):
+            for repo in org.get("repositories"):
+                existing_repo = gitea_repo.get_orgainsation_repo(
+                    org.get("name"), repo.get("name"))
+                if not existing_repo:
+                    kwargs = {k: v for k, v in repo.items() if k in ('default_branch', 'description',
+                                                                     'gitignores', 'issue_labels', 'license', 'readme', 'auto_init', 'private', 'template')}
+                    if "trust_model" in kwargs:
+                        kwargs["trust_model"] = [tm for tm in repo.get("trust_model", []) if tm in (
+                            "default", "collaborator", "committer", "collaboratorcommitter")]
+                    existing_repo = gitea_repo.create_organisation_repo(
+                        org.get("name"), repo.get("name"), **kwargs)
+                    logging.info("Create repo: %s" % repo.get("name"))
 
-        #         changed = False
-        #         kwargs = dict()
-        #         for p in ('allow_merge_commits', 'allow_rebase', 'allow_rebase_explicit', 'allow_squash_merge', 'default_branch', 'default_merge_style', 'description', 'has_issues', 'has_projects', 'has_pull_requests', 'has_wiki', 'ignore_whitespace_conflicts', 'private', 'template', 'website'):
-        #             if p in repo and repo.get(p) != existing_repo.get(p):
-        #                 kwargs[p] = repo.get(p)
-        #                 changed = True
-        #         if changed:
-        #             gitea_repo.update_organisation_repo(
-        #                 org.get("name"), repo.get("name"), **kwargs)
-        #             logging.info("Update repository: %s" % repo.get("name"))
-        #         else:
-        #             logging.info("repository already exists: %s" %
-        #                          repo.get("name"))
+                changed = False
+                kwargs = dict()
+                for p in ('allow_merge_commits', 'allow_rebase', 'allow_rebase_explicit', 'allow_squash_merge', 'default_branch', 'default_merge_style', 'description', 'has_issues', 'has_projects', 'has_pull_requests', 'has_wiki', 'ignore_whitespace_conflicts', 'private', 'template', 'website'):
+                    if p in repo and repo.get(p) != existing_repo.get(p):
+                        kwargs[p] = repo.get(p)
+                        changed = True
+                if changed:
+                    gitea_repo.update_organisation_repo(
+                        org.get("name"), repo.get("name"), **kwargs)
+                    logging.info("Update repository: %s" % repo.get("name"))
+                else:
+                    logging.info("repository already exists: %s" %
+                                 repo.get("name"))
 
-        #         if isinstance(repo.get("ssh_authorized_keys"), list):
-        #             for ssh_key in repo.get("ssh_authorized_keys", []):
-        #                 fingerprint = ssh_sha256_fingerprint(
-        #                     ssh_key.get("key"))
-        #                 if fingerprint is None:
-        #                     logging.error(
-        #                         "Can't calculate fingerprint of ssh key: %s..." % ssh_key.get("key", "")[1:20])
-        #                 existing_key = gitea_repo.get_repo_key_by_fingerprint(
-        #                     org.get("name"), repo.get("name"), fingerprint=fingerprint)
-        #                 if not existing_key:
-        #                     gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
-        #                         "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
-        #                     logging.info(
-        #                         "Add SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
-        #                 else:
-        #                     if ssh_key.get("read_only", True) != existing_key.get("read_only") or (ssh_key.get("title") or ssh_key.get("name")) != existing_key.get("title"):
-        #                         gitea_repo.delete_repo_key(org.get("name"), repo.get(
-        #                             "name"), key_id=existing_key.get("id"))
-        #                         gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
-        #                             "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
-        #                         logging.info(
-        #                             "Renew SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
-        #                     else:
-        #                         logging.info(
-        #                             "SSH key (fingerprint:%s) already addes to repo %s", fingerprint, repo.get("name"))
+                if isinstance(repo.get("ssh_authorized_keys"), list):
+                    for ssh_key in repo.get("ssh_authorized_keys", []):
+                        fingerprint = ssh_sha256_fingerprint(
+                            ssh_key.get("key"))
+                        if fingerprint is None:
+                            logging.error(
+                                "Can't calculate fingerprint of ssh key: %s..." % ssh_key.get("key", "")[1:20])
+                        existing_key = gitea_repo.get_repo_key_by_fingerprint(
+                            org.get("name"), repo.get("name"), fingerprint=fingerprint)
+                        if not existing_key:
+                            gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
+                                "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
+                            logging.info(
+                                "Add SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
+                        else:
+                            if ssh_key.get("read_only", True) != existing_key.get("read_only") or (ssh_key.get("title") or ssh_key.get("name")) != existing_key.get("title"):
+                                gitea_repo.delete_repo_key(org.get("name"), repo.get(
+                                    "name"), key_id=existing_key.get("id"))
+                                gitea_repo.add_repo_key(org.get("name"), repo.get("name"), ssh_key.get(
+                                    "name"), ssh_key.get("key"), read_only=ssh_key.get("read_only", True))
+                                logging.info(
+                                    "Renew SSH key (fingerprint:%s) to repo %s", fingerprint, repo.get("name"))
+                            else:
+                                logging.info(
+                                    "SSH key (fingerprint:%s) already addes to repo %s", fingerprint, repo.get("name"))
 
 
 # print(get_organisations(gitea_url=GITEA_URL, token=token, verify=VERIFY_CERT))
