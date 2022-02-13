@@ -1,0 +1,70 @@
+users:
+  - username: user1
+    email: user1@example.com
+    default_password: changeme
+    active: true
+    admin: true
+    description: string
+    full_name: string
+    location: string
+    prohibit_login: true
+    restricted: true
+    visibility: string
+    website: https://www.user1.com
+  - username: user2
+    email: user2@example.com
+    default_password: test
+    admin: false
+
+organisations:
+  - name: global-labs
+    description: Global Labs
+    full_name: Global Labs
+    location: Europe
+    visibility: public
+    repo_admin_change_team_access: True
+    website: "https://global-labs.com"
+    owners:
+      - user1
+  - name: test-org
+    description: Test orgnaisation
+    full_name: Test orgnaisation
+    location: Asia
+    visibility: public
+    repo_admin_change_team_access: True
+    website: "https://test.org"
+    owners:
+      - user2
+    teams:
+      - name: devops_users
+        description: "test users"
+        can_create_org_repo: true
+        includes_all_repositories: true
+        permission: write
+        units:
+          - "repo.code"
+          - "repo.issues"
+          - "repo.ext_issues"
+          - "repo.wiki"
+          - "repo.pulls"
+          - "repo.releases"
+          - "repo.projects"
+          - "repo.ext_wiki"
+        members:
+          - user1
+      - name: devops_admins
+        description: "test admins"
+        permission: admin
+        members:
+          - user2
+    repositories:
+      - name: test-repo
+        default_branch: string
+        description: string
+        private: false
+        template: false
+        website: string
+        trust_model: default
+        ssh_authorized_keys:
+          - name: test-key
+            key: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCcCCdKM54uf0iOr2bNtHltzfkcL32F/uhVq/UtBbqjMe2SSF7NCo1Vt1zjmCC2IqvpQtbJh2K4/1jCEVrK1O2Y59ARxKOEBCFEXHC2p17kdrNmMowh9GQsgM+6bCUSqqmahFf8//htQVanRQWVrIUy63oMEYS/rs8T+IOmZD7AOgc3TGd3gKxQQO9bPw/PyCrUFo7YtHWzgpWJvOhGzAflD3yd2a7ppr/btYy3YtACNgXC+ug2jfw9yoZ70ir7FMRzcNK9E5Dlnc83/+Lu3YYLRuHeLyoKB9iBYEw5grxBu7NaZoR5JR/OvpaELvrlPaeBQJ2dODRtwZbl9lApaAXB
